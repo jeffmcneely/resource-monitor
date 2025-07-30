@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'S3 Express One Zone bucket for resource monitoring data with public read access'
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: Name for the S3 Express One Zone bucket
+    Default: resource-monitor-data
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+    ConstraintDescription: Bucket name must be lowercase, start and end with alphanumeric characters
+  
+  AvailabilityZone:
+    Type: String
+    Description: Availability Zone for the S3 Express One Zone bucket
+    Default: us-east-1a
+    AllowedValues:
+      - us-east-1a
+      - us-east-1b
+      - us-east-1c
+      - us-west-2a
+      - us-west-2b
+      - us-west-2c
+      - eu-west-1a
+      - eu-west-1b
+      - eu-west-1c
+
+Resources:
+  # S3 Express One Zone Bucket
+  ResourceMonitorBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${BucketName}--${AvailabilityZone}--x-s3'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      NotificationConfiguration:
+        LambdaConfigurations: []
+      LoggingConfiguration:
+        DestinationBucketName: !Ref AccessLogsBucket
+        LogFilePrefix: 'access-logs/'
+      VersioningConfiguration:
+        Status: Suspended
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldMetrics
+            Status: Enabled
+            ExpirationInDays: 30
+            Prefix: 'metrics/'
+  
+  # Regular S3 bucket for access logs (Express One Zone doesn't support logging)
+  AccessLogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${BucketName}-access-logs-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldAccessLogs
+            Status: Enabled
+            ExpirationInDays: 90
+
+  # Bucket policy for public read access
+  ResourceMonitorBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ResourceMonitorBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub '${ResourceMonitorBucket}/*'
+          - Sid: PublicListBucket
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:ListBucket'
+            Resource: !Ref ResourceMonitorBucket
+
+  # IAM Role for EC2 instances to upload to the bucket
+  ResourceMonitorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'ResourceMonitorRole-${AWS::StackName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3UploadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                  - 's3:PutObjectAcl'
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !Sub '${ResourceMonitorBucket}/*'
+                  - !Ref ResourceMonitorBucket
+
+  # Instance Profile for EC2 instances
+  ResourceMonitorInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ResourceMonitorRole
+
+Outputs:
+  BucketName:
+    Description: Name of the created S3 Express One Zone bucket
+    Value: !Ref ResourceMonitorBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketName'
+  
+  BucketArn:
+    Description: ARN of the created S3 Express One Zone bucket
+    Value: !GetAtt ResourceMonitorBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketArn'
+  
+  BucketDomainName:
+    Description: Domain name of the S3 Express One Zone bucket
+    Value: !GetAtt ResourceMonitorBucket.DomainName
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketDomainName'
+  
+  BucketWebsiteURL:
+    Description: Website URL of the S3 Express One Zone bucket
+    Value: !Sub 'https://${ResourceMonitorBucket}.s3.${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketWebsiteURL'
+  
+  IAMRoleArn:
+    Description: ARN of the IAM role for resource monitoring instances
+    Value: !GetAtt ResourceMonitorRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-IAMRoleArn'
+  
+  InstanceProfileArn:
+    Description: ARN of the instance profile for EC2 instances
+    Value: !GetAtt ResourceMonitorInstanceProfile.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-InstanceProfileArn'

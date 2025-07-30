@@ -1,0 +1,29 @@
+[Unit]
+Description=System Resource Monitor
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=resourcemonitor
+Group=resourcemonitor
+WorkingDirectory=/opt/resourcemonitor
+ExecStart=/usr/bin/python3 /opt/resourcemonitor/resource_monitor.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables
+Environment=PATH=/usr/bin:/bin
+EnvironmentFile=-/etc/resourcemonitor/config
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/tmp /var/log
+
+[Install]
+WantedBy=multi-user.target
