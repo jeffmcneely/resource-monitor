@@ -12,7 +12,7 @@ Parameters:
   AvailabilityZone:
     Type: String
     Description: Availability Zone for the S3 Express One Zone bucket
-    Default: us-east-1a
+    Default: us-west-2a
     AllowedValues:
       - us-east-1a
       - us-east-1b

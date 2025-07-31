@@ -14,10 +14,27 @@ A Python-based system monitoring tool that continuously tracks CPU usage, NVIDIA
 
 ## Prerequisites
 
-- Python 3.8+
-- NVIDIA GPU (optional, for GPU monitoring)
-- AWS Account with appropriate permissions
-- Ubuntu/Debian-based Linux system (for systemd service)
+### System Requirements
+- **Python 3.8+** with `venv` module support
+- **Linux system** with systemd support (Ubuntu 18.04+, Debian 10+, RHEL 8+, etc.)
+- **sudo privileges** for system installation
+- **AWS CLI** configured with appropriate credentials
+
+### Python Dependencies Installation
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install python3 python3-venv python3-pip
+
+# RHEL/CentOS/Fedora
+sudo yum install python3 python3-venv python3-pip
+# or for newer versions:
+sudo dnf install python3 python3-venv python3-pip
+```
+
+### Optional Components
+- **NVIDIA GPU drivers and CUDA** (for GPU monitoring)
+- **AWS SAM CLI** (for infrastructure deployment)
 
 ## Installation
 
@@ -31,6 +48,13 @@ cd resourcemonitor
 ### 2. Install Python Dependencies
 
 ```bash
+# Create virtual environment
+python3 -m venv .venv
+
+# Activate virtual environment
+source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
@@ -71,6 +95,20 @@ aws cloudformation deploy \
 ### 5. Setup System Service
 
 ```bash
+# Run the automated installation script
+./install.sh
+
+# The script will:
+# - Create dedicated user
+# - Set up virtual environment at /opt/resourcemonitor/.venv
+# - Install Python dependencies in the virtual environment
+# - Configure systemd service
+# - Set up logging and permissions
+```
+
+**Manual installation steps (if needed):**
+
+```bash
 # Create dedicated user
 sudo useradd -r -s /bin/false resourcemonitor
 
@@ -78,10 +116,14 @@ sudo useradd -r -s /bin/false resourcemonitor
 sudo mkdir -p /opt/resourcemonitor
 sudo cp resource_monitor.py /opt/resourcemonitor/
 sudo cp requirements.txt /opt/resourcemonitor/
+
+# Create virtual environment
+sudo python3 -m venv /opt/resourcemonitor/.venv
 sudo chown -R resourcemonitor:resourcemonitor /opt/resourcemonitor
 
-# Install Python dependencies system-wide
-sudo pip install -r /opt/resourcemonitor/requirements.txt
+# Install Python dependencies in virtual environment
+sudo -u resourcemonitor /opt/resourcemonitor/.venv/bin/pip install --upgrade pip
+sudo -u resourcemonitor /opt/resourcemonitor/.venv/bin/pip install -r /opt/resourcemonitor/requirements.txt
 
 # Install systemd service
 sudo cp resourcemonitor.service /etc/systemd/system/
@@ -98,8 +140,11 @@ sudo systemctl start resourcemonitor
 # Set environment variable
 export S3_BUCKET_NAME=your-bucket-name--us-east-1a--x-s3
 
+# Activate virtual environment (for development)
+source .venv/bin/activate
+
 # Run the monitor
-python3 resource_monitor.py
+python resource_monitor.py
 ```
 
 ### Service Management
@@ -234,11 +279,15 @@ The CloudFormation template creates:
 # Test S3 connectivity
 aws s3 ls s3://your-bucket-name--us-east-1a--x-s3/
 
-# Check Python dependencies
-python3 -c "import psutil, boto3, pynvml; print('All dependencies available')"
+# Check Python dependencies (with virtual environment activated)
+python -c "import psutil, boto3, pynvml; print('All dependencies available')"
+
+# Or check system installation dependencies
+/opt/resourcemonitor/.venv/bin/python -c "import psutil, boto3, pynvml; print('All dependencies available')"
 
 # Test monitoring script
-python3 resource_monitor.py
+source .venv/bin/activate  # For development
+python resource_monitor.py
 ```
 
 ## Performance Considerations
