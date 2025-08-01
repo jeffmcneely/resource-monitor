@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  resource-monitor:
+    build: .
+    container_name: resource-monitor
+    restart: unless-stopped
+    environment:
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    env_file:
+      - .env
+    volumes:
+      # Mount logs to host for persistence
+      - ./logs:/app/logs
+      # Mount host /proc for accurate system metrics
+      - /proc:/host/proc:ro
+      # Mount host /sys for system information
+      - /sys:/host/sys:ro
+      # Optional: Mount NVIDIA runtime for GPU monitoring
+      - /usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
+    privileged: false
+    # Enable if you need GPU monitoring
+    # runtime: nvidia
+    # environment:
+    #   - NVIDIA_VISIBLE_DEVICES=all
+    networks:
+      - resource-monitor-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  resource-monitor-net:
+    driver: bridge

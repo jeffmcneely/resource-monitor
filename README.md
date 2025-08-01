@@ -12,7 +12,11 @@ A Python-based system monitoring tool that continuously tracks CPU usage, NVIDIA
 - **Systemd Integration**: Runs as a system service
 - **Infrastructure as Code**: CloudFormation template for AWS resources
 
-## Prerequisites
+### Option 2: Native Installation (Linux/systemd)
+
+For traditional systemd-based installations on Linux servers.
+
+#### Prerequisites
 
 ### System Requirements
 - **Python 3.8+** with `venv` module support
@@ -36,7 +40,64 @@ sudo dnf install python3 python3-venv python3-pip
 - **NVIDIA GPU drivers and CUDA** (for GPU monitoring)
 - **AWS SAM CLI** (for infrastructure deployment)
 
-## Installation
+#### Native Installation Steps
+
+The Resource Monitor can be deployed in two ways:
+
+### Option 1: Docker Deployment (Recommended)
+
+Docker provides better isolation, easier deployment, and consistent environments.
+
+#### 1. Prerequisites
+```bash
+# Install Docker and Docker Compose
+# Ubuntu/Debian
+sudo apt update
+sudo apt install docker.io docker-compose
+
+# Add user to docker group (logout/login required)
+sudo usermod -aG docker $USER
+```
+
+#### 2. Quick Start
+```bash
+# Clone and setup
+git clone <repository-url>
+cd resourcemonitor
+
+# Run the Docker installation script
+./install-docker.sh
+
+# Edit configuration
+nano .env
+
+# Start the container
+docker-compose up -d
+```
+
+#### 3. Container Management
+```bash
+# View logs
+docker-compose logs -f
+
+# Check status
+docker-compose ps
+
+# Stop container
+docker-compose down
+
+# Restart container
+docker-compose restart resource-monitor
+
+# Update and restart
+docker-compose build --no-cache
+docker-compose up -d
+
+# For GPU monitoring (requires NVIDIA Docker runtime)
+docker-compose -f docker-compose.gpu.yml up -d
+```
+
+### Option 2: Native Installation (Linux/systemd)
 
 ### 1. Clone and Setup
 
@@ -133,6 +194,71 @@ sudo systemctl start resourcemonitor
 ```
 
 ## Usage
+
+### Docker Deployment
+
+```bash
+# Start monitoring
+docker-compose up -d
+
+# View real-time logs
+docker-compose logs -f resource-monitor
+
+# Check container status
+docker-compose ps
+
+# Stop monitoring
+docker-compose down
+```
+
+#### GPU Monitoring with Docker
+
+For systems with NVIDIA GPUs, use the GPU-enabled compose file:
+
+```bash
+# Prerequisites: Install NVIDIA Container Toolkit
+# Ubuntu/Debian:
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo systemctl restart docker
+
+# Start with GPU support
+docker-compose -f docker-compose.gpu.yml up -d
+```
+
+#### Docker Troubleshooting
+
+```bash
+# Test Docker container
+./test-docker.sh
+
+# Check container logs
+docker logs resource-monitor
+
+# Access container shell for debugging
+docker exec -it resource-monitor /bin/bash
+
+# Rebuild container after changes
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+```
+
+### Environment Variables (Docker)
+
+Set these in your `.env` file:
+
+- `S3_BUCKET_NAME`: Name of the S3 Express One Zone bucket (required)
+- `AWS_DEFAULT_REGION`: AWS region (optional, defaults to us-east-1)
+- `AWS_ACCESS_KEY_ID`: AWS access key (optional if using IAM roles)
+- `AWS_SECRET_ACCESS_KEY`: AWS secret key (optional if using IAM roles)
+- `LOG_FILE`: Log file path (optional, defaults to /app/logs/resourcemonitor.log)
+- `DATA_DIR`: Data directory path (optional, defaults to /app/data)
+
+### Native Installation (systemd)
 
 ### Manual Execution
 

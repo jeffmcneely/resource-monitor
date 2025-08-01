@@ -204,6 +204,8 @@ Temporary Items
 resourcemonitor.log
 test_metrics.json
 metrics_*.json
+logs/
+data/
 
 # Temporary files
 *.tmp

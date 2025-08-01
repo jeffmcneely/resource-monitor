@@ -1,0 +1,70 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Documentation
+*.md
+README*
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache
+.coverage
+
+# Virtual environments
+.venv
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Data
+data/
+test_metrics.json
+metrics_*.json
+
+# Environment files (will be copied separately)
+#.env*
+
+# AWS
+.aws/
+.aws-sam/
+
+# Installation scripts
+install.sh
+install-docker.sh
+deploy.sh
+
+# Service files
+*.service
+
+# CloudFormation
+*.yaml
+*.yml
+samconfig.toml
+
+# Temporary files
+*.tmp
+*.temp
+*~

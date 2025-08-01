@@ -29,7 +29,18 @@ except ImportError:
 load_dotenv()
 
 # Configure logging
-log_file = '/var/log/resourcemonitor.log' if os.path.exists('/var/log') and os.access('/var/log', os.W_OK) else 'resourcemonitor.log'
+log_file = os.getenv('LOG_FILE', '/app/logs/resourcemonitor.log')
+# Ensure log directory exists
+os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+# Check if we can write to the log file location
+try:
+    with open(log_file, 'a') as f:
+        pass
+except (PermissionError, OSError):
+    # Fallback to current directory if we can't write to the configured location
+    log_file = 'resourcemonitor.log'
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -213,7 +224,10 @@ class ResourceMonitor:
             timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
             filename = f"metrics_{timestamp}.json"
         
-        filepath = os.path.join('/tmp', filename)
+        # Use data directory in Docker environment
+        data_dir = os.getenv('DATA_DIR', '/app/data')
+        os.makedirs(data_dir, exist_ok=True)
+        filepath = os.path.join(data_dir, filename)
         
         try:
             with open(filepath, 'w') as f:
