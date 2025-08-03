@@ -218,3 +218,6 @@ data/
 # CloudFormation deployment artifacts
 packaged-template.yaml
 packaged-template.yml
+
+# SAM configuration file
+samconfig.toml

@@ -33,6 +33,14 @@ echo "AWS credentials verified."
 read -p "Enter bucket name prefix (default: resource-monitor-data): " BUCKET_NAME
 BUCKET_NAME=${BUCKET_NAME:-resource-monitor-data}
 
+# Validate bucket name
+if [[ ! $BUCKET_NAME =~ ^(?!xn--|sthree-|sthree-configurator|amzn-s3-demo-)[a-z0-9][a-z0-9-]{1,45}[a-z0-9]$ ]]; then
+    echo "Error: Invalid bucket name. Must be 3-47 characters, lowercase letters/numbers/hyphens only,"
+    echo "start/end with alphanumeric, and not use forbidden prefixes/suffixes."
+    echo "See bucket-naming-rules.md for details."
+    exit 1
+fi
+
 read -p "Enter AWS region (default: us-east-1): " AWS_REGION
 AWS_REGION=${AWS_REGION:-us-east-1}
 

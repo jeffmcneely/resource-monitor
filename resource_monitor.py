@@ -25,8 +25,13 @@ except ImportError:
     NVIDIA_AVAILABLE = False
     print("Warning: nvidia-ml-py not available. GPU monitoring disabled.")
 
-# Load environment variables
-load_dotenv()
+# Load configuration from file first, then environment variables as fallback
+config_file = '/etc/resourcemonitor/config'
+if os.path.exists(config_file):
+    load_dotenv(config_file)
+else:
+    # Fallback to .env file if config file doesn't exist
+    load_dotenv()
 
 # Configure logging
 log_file = os.getenv('LOG_FILE', '/app/logs/resourcemonitor.log')

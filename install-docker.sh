@@ -33,13 +33,22 @@ fi
 echo "Creating directories..."
 mkdir -p logs data
 
-# Copy environment configuration
-if [ ! -f ".env" ]; then
-    echo "Creating environment configuration..."
-    cp .env.docker .env
-    echo "Please edit .env with your S3 bucket name and AWS credentials"
+# Setup configuration
+echo "Setting up configuration..."
+echo "You need to create the host configuration file at /etc/resourcemonitor/config"
+echo ""
+read -p "Do you want to run the configuration setup script now? (y/N): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if [[ $EUID -eq 0 ]]; then
+        ./setup-config.sh
+    else
+        echo "Running configuration setup with sudo..."
+        sudo ./setup-config.sh
+    fi
 else
-    echo "Environment file .env already exists."
+    echo "You can run the configuration setup later with: sudo ./setup-config.sh"
+    echo "Or manually create /etc/resourcemonitor/config with your S3 bucket settings"
 fi
 
 # Build the Docker image
@@ -60,16 +69,15 @@ echo "Installation Summary:"
 echo "- Docker image: resource-monitor:latest"
 echo "- Logs directory: ./logs"
 echo "- Data directory: ./data"
-echo "- Configuration: ./.env"
+echo "- Configuration: /etc/resourcemonitor/config"
 echo ""
 echo "Next steps:"
-echo "1. Edit .env with your S3 bucket name and AWS credentials"
-echo "2. Deploy the CloudFormation stack: sam deploy --config-file samconfig.toml"
-echo "3. Start the container:"
+echo "1. Ensure /etc/resourcemonitor/config is properly configured"
+echo "2. Start the container:"
 echo "   docker-compose up -d"
-echo "4. Check logs:"
+echo "3. Check logs:"
 echo "   docker-compose logs -f"
-echo "5. Check status:"
+echo "4. Check status:"
 echo "   docker-compose ps"
 echo ""
 echo "Management commands:"

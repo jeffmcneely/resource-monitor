@@ -28,11 +28,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
 COPY resource_monitor.py .
-COPY .env.example .env
 
-# Create directories for logs and data
-RUN mkdir -p /app/logs /app/data && \
-    chown -R resourcemonitor:resourcemonitor /app
+# Create directories for logs, data, and config
+RUN mkdir -p /app/logs /app/data /etc/resourcemonitor && \
+    chown -R resourcemonitor:resourcemonitor /app /etc/resourcemonitor
 
 # Switch to non-root user
 USER resourcemonitor
