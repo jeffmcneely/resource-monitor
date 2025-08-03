@@ -9,7 +9,7 @@ import json
 import time
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict, Any, Optional
 import logging
 
@@ -90,6 +90,9 @@ class ResourceMonitor:
                 self.gpu_count = 0
         else:
             self.gpu_count = 0
+        
+        # Track last history upload time
+        self.last_history_upload = datetime.now(UTC)
     
     def get_cpu_info(self) -> Dict[str, Any]:
         """Get CPU usage and temperature information."""
@@ -159,7 +162,10 @@ class ResourceMonitor:
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                 
                 # Get GPU name
-                name = pynvml.nvmlDeviceGetName(handle).decode('utf-8')
+                name = pynvml.nvmlDeviceGetName(handle)
+                # Handle both string and bytes return types for compatibility
+                if isinstance(name, bytes):
+                    name = name.decode('utf-8')
                 
                 # Get memory info
                 mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
@@ -211,7 +217,7 @@ class ResourceMonitor:
     
     def collect_metrics(self) -> Dict[str, Any]:
         """Collect all system metrics."""
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(UTC)
         
         metrics = {
             'timestamp': timestamp.isoformat() + 'Z',
@@ -226,7 +232,7 @@ class ResourceMonitor:
     def save_to_file(self, metrics: Dict[str, Any], filename: str = None) -> str:
         """Save metrics to a JSON file."""
         if filename is None:
-            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            timestamp = datetime.now(UTC).strftime('%Y%m%d_%H%M%S')
             filename = f"metrics_{timestamp}.json"
         
         # Use data directory in Docker environment
@@ -243,17 +249,37 @@ class ResourceMonitor:
             logger.error(f"Failed to save metrics to file: {e}")
             raise
     
-    def upload_to_s3(self, filepath: str) -> bool:
-        """Upload the metrics file to S3."""
-        filename = os.path.basename(filepath)
-        s3_key = f"metrics/{filename}"
-        
+    def upload_to_s3(self, metrics: Dict[str, Any]) -> bool:
+        """Upload metrics directly to S3 as metrics.json and to history folder if needed."""
         try:
-            self.s3_client.upload_file(filepath, self.s3_bucket, s3_key)
-            logger.debug(f"Successfully uploaded {filename} to s3://{self.s3_bucket}/{s3_key}")
+            # Always upload current metrics to metrics.json
+            metrics_json = json.dumps(metrics, indent=2)
+            self.s3_client.put_object(
+                Bucket=self.s3_bucket,
+                Key='metrics.json',
+                Body=metrics_json,
+                ContentType='application/json'
+            )
+            logger.debug(f"Successfully uploaded current metrics to s3://{self.s3_bucket}/metrics.json")
+            
+            # Check if we need to upload to history folder (every minute)
+            current_time = datetime.now(UTC)
+            if (current_time - self.last_history_upload).total_seconds() >= 60:
+                timestamp = current_time.strftime('%Y%m%d_%H%M%S')
+                history_key = f"history/metrics_{timestamp}.json"
+                
+                self.s3_client.put_object(
+                    Bucket=self.s3_bucket,
+                    Key=history_key,
+                    Body=metrics_json,
+                    ContentType='application/json'
+                )
+                logger.debug(f"Successfully uploaded to history: s3://{self.s3_bucket}/{history_key}")
+                self.last_history_upload = current_time
+            
             return True
         except Exception as e:
-            logger.error(f"Failed to upload {filename} to S3: {e}")
+            logger.error(f"Failed to upload metrics to S3: {e}")
             return False
     
     def cleanup_file(self, filepath: str):
@@ -270,18 +296,11 @@ class ResourceMonitor:
             # Collect metrics
             metrics = self.collect_metrics()
             
-            # Save to file
-            filepath = self.save_to_file(metrics)
-            
-            # Upload to S3
-            upload_success = self.upload_to_s3(filepath)
-            
-            # Cleanup local file
-            if upload_success:
-                self.cleanup_file(filepath)
+            # Upload directly to S3 (no local file needed)
+            upload_success = self.upload_to_s3(metrics)
             
             logger.info("Monitoring cycle completed successfully")
-            return True
+            return upload_success
             
         except Exception as e:
             logger.error(f"Error in monitoring cycle: {e}")
