@@ -2,7 +2,8 @@ version: '3.8'
 
 services:
   resource-monitor:
-    build: .
+# 
+#    build: .
     container_name: resource-monitor
     restart: unless-stopped
     volumes:

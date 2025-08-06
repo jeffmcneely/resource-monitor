@@ -1,0 +1,340 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Resource Monitor S3 Infrastructure with Access Point for read-only JSON access'
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: 'Name for the S3 bucket (will have a random suffix added for uniqueness)'
+    Default: 'resource-monitor-data'
+    AllowedPattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+    ConstraintDescription: 'Bucket name must be lowercase letters, numbers, and hyphens only'
+    MinLength: 3
+    MaxLength: 47
+
+  Environment:
+    Type: String
+    Description: 'Environment name (e.g., dev, staging, prod)'
+    Default: 'prod'
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+Resources:
+  # S3 Bucket for storing resource monitor data
+  ResourceMonitorBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${BucketName}-${Environment}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldHistoryData
+            Status: Enabled
+            ExpirationInDays: 90
+            Prefix: 'history/'
+          - Id: TransitionCurrentMetrics
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+            Filter:
+              Prefix: 'history/'
+      NotificationConfiguration:
+        CloudWatchConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            CloudWatchConfiguration:
+              LogGroupName: !Ref S3LogGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${BucketName}-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: 'ResourceMonitoring'
+
+  # CloudWatch Log Group for S3 events
+  S3LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/s3/${BucketName}-${Environment}'
+      RetentionInDays: 30
+
+  # S3 Access Point for controlled access
+  ResourceMonitorAccessPoint:
+    Type: AWS::S3::AccessPoint
+    Properties:
+      Bucket: !Ref ResourceMonitorBucket
+      Name: !Sub '${BucketName}-${Environment}-readonly-ap'
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowReadOnlyJSONAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - 's3:GetObject'
+              - 's3:ListBucket'
+            Resource:
+              - !Sub '${ResourceMonitorBucket}/*'
+              - !Ref ResourceMonitorBucket
+            Condition:
+              StringLike:
+                's3:prefix':
+                  - '*.json'
+          - Sid: DenyNonJSONAccess
+            Effect: Deny
+            Principal: '*'
+            Action:
+              - 's3:GetObject'
+            Resource: !Sub '${ResourceMonitorBucket}/*'
+            Condition:
+              StringNotLike:
+                's3:ExistingObjectTag/ContentType':
+                  - 'application/json'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # IAM Role for Resource Monitor application
+  ResourceMonitorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'ResourceMonitor-${Environment}-Role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy'
+      Policies:
+        - PolicyName: ResourceMonitorS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowS3BucketAccess
+                Effect: Allow
+                Action:
+                  - 's3:ListBucket'
+                  - 's3:GetBucketLocation'
+                Resource: !GetAtt ResourceMonitorBucket.Arn
+              - Sid: AllowS3ObjectOperations
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:PutObjectAcl'
+                  - 's3:DeleteObject'
+                Resource: !Sub '${ResourceMonitorBucket.Arn}/*'
+              - Sid: AllowCloudWatchLogs
+                Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/resourcemonitor/*'
+      Tags:
+        - Key: Name
+          Value: !Sub 'ResourceMonitor-${Environment}-Role'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Instance Profile for EC2 instances
+  ResourceMonitorInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub 'ResourceMonitor-${Environment}-InstanceProfile'
+      Roles:
+        - !Ref ResourceMonitorRole
+
+  # IAM User for external access (development/testing)
+  ResourceMonitorUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub 'ResourceMonitor-${Environment}-User'
+      Policies:
+        - PolicyName: ResourceMonitorUserPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowS3BucketAccess
+                Effect: Allow
+                Action:
+                  - 's3:ListBucket'
+                  - 's3:GetBucketLocation'
+                Resource: !GetAtt ResourceMonitorBucket.Arn
+              - Sid: AllowS3ObjectOperations
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 's3:PutObjectAcl'
+                Resource: !Sub '${ResourceMonitorBucket.Arn}/*'
+      Tags:
+        - Key: Name
+          Value: !Sub 'ResourceMonitor-${Environment}-User'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Access Keys for the IAM User
+  ResourceMonitorAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref ResourceMonitorUser
+
+  # IAM Group for read-only access to JSON files
+  ResourceMonitorReadOnlyGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: !Sub 'ResourceMonitor-${Environment}-ReadOnly'
+      Policies:
+        - PolicyName: ReadOnlyJSONAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowListBucket
+                Effect: Allow
+                Action:
+                  - 's3:ListBucket'
+                  - 's3:GetBucketLocation'
+                Resource: !GetAtt ResourceMonitorBucket.Arn
+              - Sid: AllowReadJSONFiles
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                Resource: !Sub '${ResourceMonitorBucket.Arn}/*.json'
+              - Sid: AllowAccessPointAccess
+                Effect: Allow
+                Action:
+                  - 's3:GetAccessPoint'
+                  - 's3:ListAccessPoints'
+                Resource: !GetAtt ResourceMonitorAccessPoint.Arn
+
+  # CloudWatch Dashboard for monitoring
+  ResourceMonitorDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub 'ResourceMonitor-${Environment}'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/S3", "BucketSizeBytes", "BucketName", "${ResourceMonitorBucket}", "StorageType", "StandardStorage" ],
+                  [ ".", "NumberOfObjects", ".", ".", ".", "AllStorageTypes" ]
+                ],
+                "period": 86400,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "S3 Bucket Metrics"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 6,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '/aws/s3/${BucketName}-${Environment}'\n| fields @timestamp, eventName, sourceIPAddress\n| filter eventName like /Put/\n| stats count() by bin(5m)",
+                "region": "${AWS::Region}",
+                "title": "S3 Upload Activity",
+                "view": "table"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  BucketName:
+    Description: 'Name of the created S3 bucket'
+    Value: !Ref ResourceMonitorBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketName'
+
+  BucketArn:
+    Description: 'ARN of the created S3 bucket'
+    Value: !GetAtt ResourceMonitorBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketArn'
+
+  AccessPointArn:
+    Description: 'ARN of the S3 Access Point for read-only JSON access'
+    Value: !GetAtt ResourceMonitorAccessPoint.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-AccessPointArn'
+
+  AccessPointAlias:
+    Description: 'Alias of the S3 Access Point'
+    Value: !GetAtt ResourceMonitorAccessPoint.Alias
+    Export:
+      Name: !Sub '${AWS::StackName}-AccessPointAlias'
+
+  IAMRoleArn:
+    Description: 'ARN of the IAM role for EC2 instances'
+    Value: !GetAtt ResourceMonitorRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-IAMRoleArn'
+
+  InstanceProfileArn:
+    Description: 'ARN of the instance profile for EC2 instances'
+    Value: !GetAtt ResourceMonitorInstanceProfile.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-InstanceProfileArn'
+
+  AccessKeyId:
+    Description: 'Access Key ID for the Resource Monitor user'
+    Value: !Ref ResourceMonitorAccessKey
+    Export:
+      Name: !Sub '${AWS::StackName}-AccessKeyId'
+
+  SecretAccessKey:
+    Description: 'Secret Access Key for the Resource Monitor user (store securely)'
+    Value: !GetAtt ResourceMonitorAccessKey.SecretAccessKey
+    NoEcho: true
+    Export:
+      Name: !Sub '${AWS::StackName}-SecretAccessKey'
+
+  ReadOnlyGroupName:
+    Description: 'Name of the IAM group for read-only access'
+    Value: !Ref ResourceMonitorReadOnlyGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-ReadOnlyGroupName'
+
+  DashboardURL:
+    Description: 'URL to the CloudWatch dashboard'
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${ResourceMonitorDashboard}'
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardURL'
+
+  Configuration:
+    Description: 'Environment variables for the Resource Monitor application'
+    Value: !Sub |
+      S3_BUCKET_NAME=${ResourceMonitorBucket}
+      AWS_DEFAULT_REGION=${AWS::Region}
+      # For EC2 instances, attach the IAM role: ${ResourceMonitorRole}
+      # For external access, use these credentials:
+      # AWS_ACCESS_KEY_ID=${ResourceMonitorAccessKey}
+      # AWS_SECRET_ACCESS_KEY=${ResourceMonitorAccessKey.SecretAccessKey}

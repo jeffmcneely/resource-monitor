@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   resource-monitor:
-    image: jeffmittens/resource-monitor:latest
+    image: jeffmittens/resourcemonitor:latest
     container_name: resource-monitor-gpu
     restart: unless-stopped
     environment:

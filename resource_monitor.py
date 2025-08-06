@@ -66,6 +66,10 @@ class ResourceMonitor:
         if not self.s3_bucket:
             raise ValueError("S3_BUCKET_NAME environment variable not set")
         
+        # Get configuration from environment variables
+        self.upload_frequency = int(os.getenv('UPLOAD_FREQUENCY_SECONDS', '60'))
+        self.hostname = os.getenv('HOSTNAME_OVERRIDE', os.uname().nodename)
+
         # Initialize S3 client
         try:
             self.s3_client = boto3.client('s3')
@@ -91,8 +95,11 @@ class ResourceMonitor:
         else:
             self.gpu_count = 0
         
-        # Track last history upload time
-        self.last_history_upload = datetime.now(UTC)
+        # Track last upload time
+        self.last_upload = datetime.now(UTC)
+        
+        # Update the list.json file on startup
+        self.update_host_list()
     
     def get_cpu_info(self) -> Dict[str, Any]:
         """Get CPU usage and temperature information."""
@@ -221,7 +228,7 @@ class ResourceMonitor:
         
         metrics = {
             'timestamp': timestamp.isoformat() + 'Z',
-            'hostname': os.uname().nodename,
+            'hostname': self.hostname,
             'cpu': self.get_cpu_info(),
             'memory': self.get_memory_info(),
             'gpu': self.get_gpu_info()
@@ -249,24 +256,88 @@ class ResourceMonitor:
             logger.error(f"Failed to save metrics to file: {e}")
             raise
     
-    def upload_to_s3(self, metrics: Dict[str, Any]) -> bool:
-        """Upload metrics directly to S3 as metrics.json and to history folder if needed."""
+    def update_host_list(self):
+        """Update the list.json file to include this hostname if not already present."""
         try:
-            # Always upload current metrics to metrics.json
-            metrics_json = json.dumps(metrics, indent=2)
+            current_time = datetime.now(UTC)
+            
+            # Try to get existing list
+            try:
+                response = self.s3_client.get_object(Bucket=self.s3_bucket, Key='list.json')
+                host_data = json.loads(response['Body'].read().decode('utf-8'))
+                
+                # Handle both old format (simple list) and new format (dict with timestamps)
+                if isinstance(host_data, list):
+                    # Convert old format to new format
+                    host_list = {host: current_time.isoformat() + 'Z' for host in host_data}
+                else:
+                    host_list = host_data
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'NoSuchKey':
+                    # File doesn't exist, create new list
+                    host_list = {}
+                else:
+                    raise
+            
+            # Remove entries older than 5 minutes
+            cutoff_time = current_time.timestamp() - 300  # 5 minutes ago
+            hosts_to_remove = []
+            
+            for hostname, timestamp_str in host_list.items():
+                try:
+                    # Parse the timestamp
+                    host_timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                    if host_timestamp.timestamp() < cutoff_time:
+                        hosts_to_remove.append(hostname)
+                except (ValueError, AttributeError):
+                    # Invalid timestamp format, remove the entry
+                    hosts_to_remove.append(hostname)
+            
+            # Remove old entries
+            for hostname in hosts_to_remove:
+                del host_list[hostname]
+                logger.info(f"Removed inactive host from list: {hostname}")
+            
+            # Update or add current hostname with current timestamp
+            host_list[self.hostname] = current_time.isoformat() + 'Z'
+            
+            # Upload updated list
             self.s3_client.put_object(
                 Bucket=self.s3_bucket,
-                Key='metrics.json',
-                Body=metrics_json,
+                Key='list.json',
+                Body=json.dumps(host_list, indent=2, sort_keys=True),
                 ContentType='application/json'
             )
-            logger.debug(f"Successfully uploaded current metrics to s3://{self.s3_bucket}/metrics.json")
             
-            # Check if we need to upload to history folder (every minute)
+            if self.hostname not in [h for h in host_list.keys() if h != self.hostname]:
+                logger.info(f"Added {self.hostname} to host list")
+            else:
+                logger.debug(f"Updated timestamp for {self.hostname} in host list")
+                
+        except Exception as e:
+            logger.warning(f"Failed to update host list: {e}")
+
+    def upload_to_s3(self, metrics: Dict[str, Any]) -> bool:
+        """Upload metrics to S3 based on frequency setting."""
+        try:
             current_time = datetime.now(UTC)
-            if (current_time - self.last_history_upload).total_seconds() >= 60:
+            
+            # Check if enough time has passed since last upload
+            if (current_time - self.last_upload).total_seconds() >= self.upload_frequency:
+                metrics_json = json.dumps(metrics, indent=2)
+                
+                # Upload current metrics to <hostname>.json
+                self.s3_client.put_object(
+                    Bucket=self.s3_bucket,
+                    Key=f'{self.hostname}.json',
+                    Body=metrics_json,
+                    ContentType='application/json'
+                )
+                logger.debug(f"Successfully uploaded current metrics to s3://{self.s3_bucket}/{self.hostname}.json")
+                
+                # Upload to history folder
                 timestamp = current_time.strftime('%Y%m%d_%H%M%S')
-                history_key = f"history/metrics_{timestamp}.json"
+                history_key = f"history/{self.hostname}/{timestamp}.json"
                 
                 self.s3_client.put_object(
                     Bucket=self.s3_bucket,
@@ -275,9 +346,16 @@ class ResourceMonitor:
                     ContentType='application/json'
                 )
                 logger.debug(f"Successfully uploaded to history: s3://{self.s3_bucket}/{history_key}")
-                self.last_history_upload = current_time
-            
-            return True
+                
+                # Update host list with current timestamp every time we upload to history
+                self.update_host_list()
+                
+                self.last_upload = current_time
+                return True
+            else:
+                # Not time to upload yet
+                return True
+                
         except Exception as e:
             logger.error(f"Failed to upload metrics to S3: {e}")
             return False
@@ -296,10 +374,11 @@ class ResourceMonitor:
             # Collect metrics
             metrics = self.collect_metrics()
             
-            # Upload directly to S3 (no local file needed)
+            # Upload to S3 based on frequency setting
             upload_success = self.upload_to_s3(metrics)
             
-            logger.info("Monitoring cycle completed successfully")
+            if upload_success:
+                logger.debug("Monitoring cycle completed successfully")
             return upload_success
             
         except Exception as e:
@@ -309,6 +388,8 @@ class ResourceMonitor:
     def run_continuous(self, interval: float = 1.0):
         """Run continuous monitoring with specified interval."""
         logger.info(f"Starting continuous monitoring with {interval}s interval")
+        logger.info(f"Upload frequency: {self.upload_frequency}s")
+        logger.info(f"Hostname: {self.hostname}")
         logger.info(f"Uploading to S3 bucket: {self.s3_bucket}")
         
         while True:

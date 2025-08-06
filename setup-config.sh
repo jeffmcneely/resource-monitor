@@ -38,17 +38,23 @@ echo ""
 
 # S3 Bucket Name (required)
 while true; do
-    read -p "S3 Bucket Name (required, must end with --ZONE--x-s3): " S3_BUCKET_NAME
+    read -p "S3 Bucket Name (required): " S3_BUCKET_NAME
     if [[ -n "$S3_BUCKET_NAME" ]]; then
-        if [[ "$S3_BUCKET_NAME" =~ --[a-z0-9-]+--x-s3$ ]]; then
-            break
-        else
-            echo "Error: Bucket name must be a valid S3 Express One Zone format (ending with --ZONE--x-s3)"
-        fi
+        break
     else
         echo "Error: S3 Bucket Name is required"
     fi
 done
+
+# Upload Frequency (optional)
+read -p "Upload frequency in seconds (optional, press Enter for 60): " UPLOAD_FREQUENCY_SECONDS
+UPLOAD_FREQUENCY_SECONDS=${UPLOAD_FREQUENCY_SECONDS:-60}
+
+# Hostname (optional)
+read -p "Custom hostname (optional, press Enter for system hostname): " HOSTNAME_OVERRIDE
+if [[ -z "$HOSTNAME_OVERRIDE" ]]; then
+    HOSTNAME_OVERRIDE=$(hostname)
+fi
 
 # AWS Region (optional)
 read -p "AWS Region (optional, press Enter for us-east-1): " AWS_REGION
@@ -71,8 +77,14 @@ cat > "$CONFIG_FILE" << EOF
 # Environment configuration for Resource Monitor
 # Created on $(date)
 
-# Required: S3 bucket name (include the full Express One Zone suffix)
+# Required: S3 bucket name
 S3_BUCKET_NAME=$S3_BUCKET_NAME
+
+# Optional: Upload frequency in seconds (default: 60)
+UPLOAD_FREQUENCY_SECONDS=$UPLOAD_FREQUENCY_SECONDS
+
+# Optional: Custom hostname (default: system hostname)
+HOSTNAME_OVERRIDE=$HOSTNAME_OVERRIDE
 
 # Optional: AWS region
 AWS_DEFAULT_REGION=$AWS_REGION
@@ -98,6 +110,12 @@ chmod 644 "$CONFIG_FILE"
 echo ""
 echo "Configuration file created successfully!"
 echo "File location: $CONFIG_FILE"
+echo ""
+echo "Configuration summary:"
+echo "  S3 Bucket: $S3_BUCKET_NAME"
+echo "  Upload Frequency: ${UPLOAD_FREQUENCY_SECONDS}s"
+echo "  Hostname: $HOSTNAME_OVERRIDE"
+echo "  AWS Region: $AWS_REGION"
 echo ""
 echo "You can now run the Docker container with:"
 echo "  docker-compose up -d"

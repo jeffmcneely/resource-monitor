@@ -1,16 +1,53 @@
 # System Resource Monitor
 
-A Python-based system monitoring tool that continuously tracks CPU usage, NVIDIA GPU metrics, system RAM, GPU VRAM, and CPU temperature. The collected data is stored in JSON format and uploaded to an AWS S3 Express One Zone bucket every second.
+A Python-based system monitoring tool that continuously tracks CPU usage, NVIDIA GPU metrics, system RAM, GPU VRAM, and CPU temperature. The collected data is stored in JSON format# Optional: Upload frequency in seconds (default: 60)
+UPLOAD_FREQUENCY_SECONDS=1
+
+# Optional: Custom hostname (default: system hostname)
+HOSTNAME_OVERRIDE=server01uploaded to AWS S3 buckets with configurable frequency.
 
 ## Features
 
 - **CPU Monitoring**: Usage percentage, per-core usage, frequency, temperature
 - **Memory Monitoring**: RAM usage, swap usage, detailed memory statistics
 - **GPU Monitoring**: NVIDIA GPU utilization, VRAM usage, temperature, power consumption, fan speed
-- **Real-time Data**: Collects metrics every second
-- **Cloud Storage**: Automatic upload to S3 Express One Zone bucket
+- **Configurable Upload Frequency**: Upload metrics at custom intervals (default: 60 seconds)
+- **Multi-Host Support**: Hostname-based organization with automatic host discovery
+- **Cloud Storage**: Automatic upload to standard AWS S3 buckets
 - **Systemd Integration**: Runs as a system service on Linux
 - **Docker Support**: Containerized deployment with GPU support
+
+## S3 Bucket Structure
+
+The application organizes data in S3 using the following structure:
+
+```
+your-s3-bucket/
+├── list.json                           # List of all monitored hostnames
+├── server01.json                       # Latest metrics for server01
+├── server02.json                       # Latest metrics for server02
+├── workstation.json                    # Latest metrics for workstation
+└── history/                           # Historical data archive
+    ├── server01/                      # Host-specific history
+    │   ├── 20250805_143022.json       # Timestamped metrics
+    │   ├── 20250805_143122.json
+    │   └── 20250805_143222.json
+    ├── server02/
+    │   ├── 20250805_143023.json
+    │   ├── 20250805_143123.json
+    │   └── 20250805_143223.json
+    └── workstation/
+        ├── 20250805_143025.json
+        ├── 20250805_143125.json
+        └── 20250805_143225.json
+```
+
+### File Descriptions
+
+- **`list.json`**: Automatically maintained list of all hostnames with their last activity timestamps. Entries older than 5 minutes are automatically removed.
+- **`<hostname>.json`**: Current/latest metrics for each host (overwritten on each upload)
+- **`history/<hostname>/<timestamp>.json`**: Historical metrics archived with timestamp
+- **Timestamps**: Format `YYYYMMDD_HHMMSS` (e.g., `20250805_143022` = Aug 5, 2025, 14:30:22 UTC)
 
 ## Quick Start
 
@@ -169,8 +206,14 @@ The script will interactively prompt for:
 ```bash
 sudo mkdir -p /etc/resourcemonitor
 sudo tee /etc/resourcemonitor/config << EOF
-# Required: S3 bucket name (must be S3 Express One Zone format)
-S3_BUCKET_NAME=your-bucket-name--us-east-1a--x-s3
+# Required: S3 bucket name (standard S3 bucket)
+S3_BUCKET_NAME=your-bucket-name
+
+# Optional: Upload frequency in seconds (default: 60)
+UPLOAD_FREQUENCY_SECONDS=1
+
+# Optional: Custom hostname (default: system hostname)
+HOSTNAME=server01
 
 # Optional: AWS region
 AWS_DEFAULT_REGION=us-east-1
@@ -185,20 +228,23 @@ sudo chmod 644 /etc/resourcemonitor/config
 
 ### Configuration Parameters
 
-| Parameter | Required | Description | Example |
-|-----------|----------|-------------|---------|
-| `S3_BUCKET_NAME` | Yes | S3 Express One Zone bucket name | `my-data--us-east-1a--x-s3` |
-| `AWS_DEFAULT_REGION` | No | AWS region (default: us-east-1) | `us-west-2` |
-| `AWS_ACCESS_KEY_ID` | No | AWS access key (if not using IAM roles) | `AKIAIOSFODNN7EXAMPLE` |
-| `AWS_SECRET_ACCESS_KEY` | No | AWS secret key (if not using IAM roles) | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
+| Parameter | Required | Description | Default | Example |
+|-----------|----------|-------------|---------|---------|
+| `S3_BUCKET_NAME` | Yes | Standard S3 bucket name | - | `my-monitoring-data` |
+| `UPLOAD_FREQUENCY_SECONDS` | No | Upload frequency in seconds | `60` | `30` |
+| `HOSTNAME_OVERRIDE` | No | Custom hostname identifier | system hostname | `server01` |
+| `AWS_DEFAULT_REGION` | No | AWS region | `us-east-1` | `us-west-2` |
+| `AWS_ACCESS_KEY_ID` | No | AWS access key (if not using IAM roles) | - | `AKIAIOSFODNN7EXAMPLE` |
+| `AWS_SECRET_ACCESS_KEY` | No | AWS secret key (if not using IAM roles) | - | `wJalrXUtnFEMI/K7MDENG...` |
 
-### S3 Express One Zone Bucket
+### Standard S3 Bucket
 
-You must create an S3 Express One Zone bucket in your AWS account. The bucket name must follow the format: `bucket-name--availability-zone--x-s3`
+You can use any standard S3 bucket in your AWS account. The bucket name should follow standard S3 naming conventions:
 
 **Examples:**
-- `my-metrics--us-east-1a--x-s3`
-- `monitoring-data--us-west-2b--x-s3`
+- `my-monitoring-data`
+- `company-resource-metrics`
+- `server-monitoring-bucket`
 
 ### AWS Authentication
 
@@ -267,7 +313,9 @@ sudo systemctl disable resourcemonitor
 source .venv/bin/activate
 
 # Set configuration
-export S3_BUCKET_NAME=your-bucket-name--us-east-1a--x-s3
+export S3_BUCKET_NAME=your-bucket-name
+export HOSTNAME_OVERRIDE=my-server
+export UPLOAD_FREQUENCY_SECONDS=30
 
 # Run the monitor
 python resource_monitor.py
@@ -275,12 +323,30 @@ python resource_monitor.py
 
 ## Data Format
 
+### Host List Format
+
+The `list.json` file maintains a list of active hosts with timestamps:
+
+```json
+{
+  "server01": "2025-08-05T14:30:22Z",
+  "server02": "2025-08-05T14:30:23Z",
+  "workstation": "2025-08-05T14:30:25Z"
+}
+```
+
+- **Automatic Cleanup**: Entries older than 5 minutes are automatically removed
+- **Updated on Upload**: Timestamp updated every time metrics are uploaded to history
+- **Backward Compatible**: Automatically converts old list format to new timestamped format
+
+### Metrics Data Format
+
 The monitoring data is stored in JSON format with the following structure:
 
 ```json
 {
-  "timestamp": "2025-08-02T12:00:00Z",
-  "hostname": "monitoring-server",
+  "timestamp": "2025-08-05T14:30:22Z",
+  "hostname": "server01",
   "cpu": {
     "usage_percent": 25.4,
     "usage_per_core": [20.1, 30.7, 22.3, 28.9],
@@ -289,6 +355,8 @@ The monitoring data is stored in JSON format with the following structure:
       "min": 800.0,
       "max": 3200.0
     },
+    "count_logical": 8,
+    "count_physical": 4,
     "temperatures": [
       {
         "sensor": "coretemp_Core 0",
@@ -301,12 +369,15 @@ The monitoring data is stored in JSON format with the following structure:
   "memory": {
     "virtual": {
       "total": 16777216000,
+      "available": 8388608000,
       "used": 8388608000,
-      "percent": 50.0
+      "percent": 50.0,
+      "free": 8388608000
     },
     "swap": {
       "total": 2147483648,
       "used": 0,
+      "free": 2147483648,
       "percent": 0.0
     }
   },
@@ -317,6 +388,7 @@ The monitoring data is stored in JSON format with the following structure:
       "memory": {
         "total": 17179869184,
         "used": 2147483648,
+        "free": 15032385536,
         "percent": 12.5
       },
       "utilization": {
@@ -362,7 +434,7 @@ ls -la /etc/resourcemonitor/config
 cat /etc/resourcemonitor/config
 
 # Test S3 connectivity
-aws s3 ls s3://your-bucket-name--us-east-1a--x-s3/
+aws s3 ls s3://your-bucket-name/
 ```
 
 #### Docker Issues
@@ -416,7 +488,7 @@ aws sts get-caller-identity
 aws s3 ls
 
 # Check S3 bucket permissions
-aws s3api get-bucket-policy --bucket your-bucket-name--us-east-1a--x-s3
+aws s3api get-bucket-policy --bucket your-bucket-name
 ```
 
 ## Security
@@ -441,17 +513,19 @@ sudo chown -R resourcemonitor:resourcemonitor /opt/resourcemonitor
 
 ## Performance Considerations
 
-- **S3 Express One Zone**: Provides single-digit millisecond latency for high-frequency uploads
+- **Standard S3 Buckets**: Cost-effective storage with configurable upload frequency
 - **Memory Efficient**: Minimal memory footprint (~50MB typical usage)
 - **CPU Overhead**: Less than 1% CPU usage on modern systems
 - **Network Bandwidth**: Approximately 1KB per metric upload
 - **Storage**: Each JSON record is typically 1-2KB
+- **Upload Frequency**: Configurable interval reduces API calls and costs
 
 ## Cost Optimization
 
-- **S3 Express One Zone**: Optimized for high-frequency access patterns
+- **Configurable Upload Frequency**: Adjust upload intervals to balance data freshness with costs
 - **Efficient Data Format**: Compact JSON structure minimizes storage costs
-- **No Data Retention**: Implement lifecycle policies if long-term storage is not needed
+- **Lifecycle Policies**: Implement S3 lifecycle rules for automatic data archival/deletion
+- **Host-based Organization**: Easy to implement retention policies per host
 
 ## Development
 
