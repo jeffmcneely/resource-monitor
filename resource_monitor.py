@@ -17,6 +17,7 @@ import psutil
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 from dotenv import load_dotenv
+import threading
 
 try:
     import pynvml
@@ -58,29 +59,73 @@ logger = logging.getLogger(__name__)
 
 
 class ResourceMonitor:
+    def assume_role_and_refresh(self):
+        """Assume ResourceMonitorRole for 60 minutes, refresh every 59 minutes."""
+        role_arn = os.getenv('RESOURCE_MONITOR_ROLE_ARN')
+        session_name = f"ResourceMonitorSession-{self.hostname}"
+        duration_seconds = 3600  # 60 minutes
+        refresh_interval = duration_seconds - 60  # 59 minutes
+        sts_client = boto3.client('sts')
+        while True:
+            try:
+                response = sts_client.assume_role(
+                    RoleArn=role_arn,
+                    RoleSessionName=session_name,
+                    DurationSeconds=duration_seconds
+                )
+                creds = response['Credentials']
+                os.environ['AWS_ACCESS_KEY_ID'] = creds['AccessKeyId']
+                os.environ['AWS_SECRET_ACCESS_KEY'] = creds['SecretAccessKey']
+                os.environ['AWS_SESSION_TOKEN'] = creds['SessionToken']
+                logger.info(f"Assumed role {role_arn} for {duration_seconds//60} minutes. Next refresh in {refresh_interval//60} minutes.")
+            except Exception as e:
+                logger.error(f"Failed to assume role: {e}")
+            time.sleep(refresh_interval)
     """System resource monitoring class."""
     
     def __init__(self):
         """Initialize the resource monitor."""
-        self.s3_bucket = os.getenv('S3_BUCKET_NAME')
-        if not self.s3_bucket:
-            raise ValueError("S3_BUCKET_NAME environment variable not set")
-        
         # Get configuration from environment variables
         self.upload_frequency = int(os.getenv('UPLOAD_FREQUENCY_SECONDS', '60'))
         self.hostname = os.getenv('HOSTNAME_OVERRIDE', os.uname().nodename)
 
-        # Initialize S3 client
+        # Start role assumption/refresh thread if RESOURCE_MONITOR_ROLE_ARN is set
+        if os.getenv('RESOURCE_MONITOR_ROLE_ARN'):
+            threading.Thread(target=self.assume_role_and_refresh, daemon=True).start()
+
+        # Initialize AWS clients
         try:
+            # Initialize SSM client to get bucket name
+            self.ssm_client = boto3.client('ssm')
+            
+            # Get bucket name from SSM Parameter Store
+            try:
+                response = self.ssm_client.get_parameter(
+                    Name='/resourcemonitor/config/bucketName',
+                    WithDecryption=False
+                )
+                self.s3_bucket = response['Parameter']['Value']
+                logger.info(f"Retrieved S3 bucket name from SSM: {self.s3_bucket}")
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'ParameterNotFound':
+                    logger.error("SSM parameter '/resourcemonitor/config/bucketName' not found")
+                    raise ValueError("Bucket name not configured in SSM Parameter Store")
+                else:
+                    logger.error(f"Failed to retrieve bucket name from SSM: {e}")
+                    raise
+            
+            # Initialize S3 client
             self.s3_client = boto3.client('s3')
+            
             # Test S3 connection
             self.s3_client.head_bucket(Bucket=self.s3_bucket)
             logger.info(f"Successfully connected to S3 bucket: {self.s3_bucket}")
+            
         except NoCredentialsError:
-            logger.error("AWS credentials not found")
+            logger.error("AWS credentials not found. Ensure EC2 instance has ResourceMonitorRole attached")
             raise
         except ClientError as e:
-            logger.error(f"Failed to connect to S3 bucket {self.s3_bucket}: {e}")
+            logger.error(f"Failed to initialize AWS services: {e}")
             raise
         
         # Initialize NVIDIA GPU monitoring if available
@@ -100,6 +145,7 @@ class ResourceMonitor:
         
         # Update the list.json file on startup
         self.update_host_list()
+    
     
     def get_cpu_info(self) -> Dict[str, Any]:
         """Get CPU usage and temperature information."""

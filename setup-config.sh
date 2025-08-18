@@ -1,87 +1,49 @@
 #!/bin/bash
 
-# Configuration setup script for Resource Monitor
-# This script helps create the host configuration file for Docker deployment
-
+# Setup script for Resource Monitor configuration
 set -e
 
-CONFIG_DIR="/etc/resourcemonitor"
-CONFIG_FILE="$CONFIG_DIR/config"
+echo "Resource Monitor Configuration Setup"
+echo "===================================="
+echo
+echo "This script will create the configuration file for the Resource Monitor service."
+echo "The S3 bucket name is now managed through AWS SSM Parameter Store."
+echo
 
-echo "Setting up Resource Monitor configuration..."
-
-# Check if running with sudo
-if [[ $EUID -ne 0 ]]; then
-   echo "This script must be run as root (use sudo)"
-   exit 1
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+    echo "Error: This script must be run as root (use sudo)"
+    exit 1
 fi
 
-# Create configuration directory
-echo "Creating configuration directory: $CONFIG_DIR"
-mkdir -p "$CONFIG_DIR"
+# Create config directory
+mkdir -p /etc/resourcemonitor
 
-# Check if config file already exists
-if [[ -f "$CONFIG_FILE" ]]; then
-    echo "Configuration file already exists at: $CONFIG_FILE"
-    read -p "Do you want to overwrite it? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Keeping existing configuration file."
-        exit 0
-    fi
-fi
-
-# Prompt for configuration values
-echo ""
+# Get configuration values
 echo "Please provide the following configuration values:"
-echo ""
+echo
 
-# S3 Bucket Name (required)
-while true; do
-    read -p "S3 Bucket Name (required): " S3_BUCKET_NAME
-    if [[ -n "$S3_BUCKET_NAME" ]]; then
-        break
-    else
-        echo "Error: S3 Bucket Name is required"
-    fi
-done
+# Upload frequency
+read -p "Upload frequency in seconds (optional, press Enter for 60): " UPLOAD_FREQUENCY
+UPLOAD_FREQUENCY=${UPLOAD_FREQUENCY:-60}
 
-# Upload Frequency (optional)
-read -p "Upload frequency in seconds (optional, press Enter for 60): " UPLOAD_FREQUENCY_SECONDS
-UPLOAD_FREQUENCY_SECONDS=${UPLOAD_FREQUENCY_SECONDS:-60}
-
-# Hostname (optional)
+# Hostname override
 read -p "Custom hostname (optional, press Enter for system hostname): " HOSTNAME_OVERRIDE
-if [[ -z "$HOSTNAME_OVERRIDE" ]]; then
+if [ -z "$HOSTNAME_OVERRIDE" ]; then
     HOSTNAME_OVERRIDE=$(hostname)
 fi
 
-# AWS Region (optional)
+# AWS Region
 read -p "AWS Region (optional, press Enter for us-east-1): " AWS_REGION
 AWS_REGION=${AWS_REGION:-us-east-1}
 
-# AWS Credentials (optional)
-echo ""
-echo "AWS Credentials (optional - leave blank if using IAM roles):"
-read -p "AWS Access Key ID: " AWS_ACCESS_KEY_ID
-if [[ -n "$AWS_ACCESS_KEY_ID" ]]; then
-    read -s -p "AWS Secret Access Key: " AWS_SECRET_ACCESS_KEY
-    echo ""
-fi
-
 # Create configuration file
-echo ""
-echo "Creating configuration file: $CONFIG_FILE"
-
-cat > "$CONFIG_FILE" << EOF
-# Environment configuration for Resource Monitor
-# Created on $(date)
-
-# Required: S3 bucket name
-S3_BUCKET_NAME=$S3_BUCKET_NAME
+cat > /etc/resourcemonitor/config << EOF
+# Resource Monitor Configuration
+# S3 bucket name is retrieved from SSM Parameter Store: /resourcemonitor/config/bucketName
 
 # Optional: Upload frequency in seconds (default: 60)
-UPLOAD_FREQUENCY_SECONDS=$UPLOAD_FREQUENCY_SECONDS
+UPLOAD_FREQUENCY_SECONDS=$UPLOAD_FREQUENCY
 
 # Optional: Custom hostname (default: system hostname)
 HOSTNAME_OVERRIDE=$HOSTNAME_OVERRIDE
@@ -89,36 +51,36 @@ HOSTNAME_OVERRIDE=$HOSTNAME_OVERRIDE
 # Optional: AWS region
 AWS_DEFAULT_REGION=$AWS_REGION
 
-# Optional: AWS credentials (not needed if using IAM roles)
+# Optional: Log file location
+LOG_FILE=/var/log/resourcemonitor/resourcemonitor.log
+
+# Optional: Data directory for temporary files
+DATA_DIR=/var/lib/resourcemonitor/data
 EOF
 
-if [[ -n "$AWS_ACCESS_KEY_ID" ]]; then
-    cat >> "$CONFIG_FILE" << EOF
-AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-EOF
-else
-    cat >> "$CONFIG_FILE" << EOF
-# AWS_ACCESS_KEY_ID=your_access_key
-# AWS_SECRET_ACCESS_KEY=your_secret_key
-EOF
-fi
+# Set proper permissions
+chmod 644 /etc/resourcemonitor/config
 
-# Set appropriate permissions
-chmod 644 "$CONFIG_FILE"
+# Create log and data directories
+mkdir -p /var/log/resourcemonitor
+mkdir -p /var/lib/resourcemonitor/data
 
-echo ""
+echo
 echo "Configuration file created successfully!"
-echo "File location: $CONFIG_FILE"
-echo ""
+echo "File location: /etc/resourcemonitor/config"
+echo
 echo "Configuration summary:"
-echo "  S3 Bucket: $S3_BUCKET_NAME"
-echo "  Upload Frequency: ${UPLOAD_FREQUENCY_SECONDS}s"
+echo "  Upload Frequency: ${UPLOAD_FREQUENCY}s"
 echo "  Hostname: $HOSTNAME_OVERRIDE"
 echo "  AWS Region: $AWS_REGION"
-echo ""
-echo "You can now run the Docker container with:"
-echo "  docker-compose up -d"
-echo ""
-echo "To edit the configuration later:"
-echo "  sudo nano $CONFIG_FILE"
+echo "  S3 Bucket: Retrieved from SSM Parameter Store"
+echo
+echo "Important: Ensure your EC2 instance has the ResourceMonitorRole attached"
+echo "and the SSM parameter '/resourcemonitor/config/bucketName' is configured."
+echo
+echo "To deploy the IAM role and SSM parameter, use:"
+echo "  aws cloudformation deploy --template-file resource_monitor_s3_role.yaml \\"
+echo "    --stack-name resource-monitor-role \\"
+echo "    --parameter-overrides BucketName=your-bucket-name \\"
+echo "    --capabilities CAPABILITY_NAMED_IAM"
+EOF
